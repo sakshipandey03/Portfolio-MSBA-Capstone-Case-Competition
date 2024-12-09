@@ -1,0 +1,249 @@
+---
+title: "EDA- Swire Coca Cola"
+author: "Sakshi Pandey"
+date: "2024-09-05"
+output: 
+  html_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+## 1. Load Libraries and Data
+
+```{r}
+# Load necessary libraries
+library(tidyverse) # For data manipulation and visualization
+library(lubridate) # For handling date and time data
+
+# Load the CSV file (Replace the path with the correct file location)
+iwc_data <- read_csv("IWC_Work_Orders_Extract.csv")
+
+# Check the structure of the data
+glimpse(iwc_data)
+
+# Summarize basic statistics
+summary(iwc_data)
+
+```
+
+## 2. Data Cleaning and Exploration
+
+```{r}
+# Check for missing values
+missing_values <- colSums(is.na(iwc_data))
+missing_values
+
+# Handle missing data (e.g., removing or imputing)
+# You can decide to remove rows with many missing values or impute them based on context
+iwc_data_clean <- iwc_data %>% drop_na() # This drops rows with any missing values
+
+# Convert date columns to date format for further analysis
+iwc_data_clean <- iwc_data_clean %>%
+  mutate(
+    EXECUTION_START_DATE = ymd(EXECUTION_START_DATE),
+    EXECUTION_FINISH_DATE = ymd(EXECUTION_FINISH_DATE),
+    ACTUAL_START_TIME = hms(ACTUAL_START_TIME),
+    ACTUAL_FINISH_TIME = hms(ACTUAL_FINISH_TIME)
+  )
+
+# Basic visualizations to understand the downtime trends
+# Histogram of actual work time
+ggplot(iwc_data_clean, aes(x = ACTUAL_WORK_IN_MINUTES)) +
+  geom_histogram(binwidth = 50, fill = "blue", color = "white") +
+  labs(title = "Distribution of Actual Work Time in Minutes", x = "Work Time (minutes)", y = "Frequency")
+
+# Bar plot of maintenance types
+ggplot(iwc_data_clean, aes(x = MAINTENANCE_TYPE_DESCRIPTION)) +
+  geom_bar(fill = "green") +
+  labs(title = "Count of Maintenance Types", x = "Maintenance Type", y = "Count")
+
+# Time series plot of downtimes by date
+ggplot(iwc_data_clean, aes(x = EXECUTION_START_DATE, y = ACTUAL_WORK_IN_MINUTES)) +
+  geom_line() +
+  labs(title = "Downtimes Over Time", x = "Date", y = "Actual Work Time (minutes)")
+
+```
+
+
+## 3. Exploratory Data Analysis (EDA)
+
+### 3.1. Step 1: Understanding the Data Structure
+First, we will take a closer look at the structure of the data, especially focusing on key variables related to downtime and machine performance
+
+```{r}
+# Check the structure again for reference
+str(iwc_data_clean)
+
+# Check for unique values in categorical variables
+unique(iwc_data_clean$PLANT_ID)
+unique(iwc_data_clean$MAINTENANCE_TYPE_DESCRIPTION)
+unique(iwc_data_clean$ORDER_DESCRIPTION)
+
+# Summarize downtime by plant
+plant_summary <- iwc_data_clean %>%
+  group_by(PLANT_ID) %>%
+  summarize(
+    total_downtime = sum(ACTUAL_WORK_IN_MINUTES, na.rm = TRUE),
+    avg_downtime = mean(ACTUAL_WORK_IN_MINUTES, na.rm = TRUE),
+    num_orders = n()
+  )
+
+# View the summary of downtime per plant
+print(plant_summary)
+
+
+```
+
+
+### 3.2. Step 2: Visualizing Key Patterns
+We'll now visualize some of the key relationships in the data.
+The boxplot helps identify how different maintenance types impact the downtime.
+
+```{r}
+# Visualize downtime per plant
+ggplot(plant_summary, aes(x = PLANT_ID, y = total_downtime)) +
+  geom_col(fill = "purple") +
+  labs(title = "Total Downtime by Plant", x = "Plant ID", y = "Total Downtime (minutes)")
+
+# Visualize downtime distribution across different maintenance types
+ggplot(iwc_data_clean, aes(x = MAINTENANCE_TYPE_DESCRIPTION, y = ACTUAL_WORK_IN_MINUTES)) +
+  geom_boxplot(fill = "orange") +
+  labs(title = "Downtime Distribution by Maintenance Type", x = "Maintenance Type", y = "Actual Work Time (minutes)")
+
+```
+
+
+### 3.3. Step 3: Time Series Analysis of Downtime
+We can also explore how downtimes vary over time.
+This time series plot will help us understand if there are any trends or seasonality in machine downtimes.
+
+```{r}
+# Group data by date and summarize downtime
+time_series <- iwc_data_clean %>%
+  group_by(EXECUTION_START_DATE) %>%
+  summarize(total_downtime = sum(ACTUAL_WORK_IN_MINUTES, na.rm = TRUE))
+
+# Plot downtime over time
+ggplot(time_series, aes(x = EXECUTION_START_DATE, y = total_downtime)) +
+  geom_line(color = "blue") +
+  labs(title = "Total Downtime Over Time", x = "Date", y = "Total Downtime (minutes)")
+
+```
+
+
+### 3.4. Step 4: Correlation Analysis
+
+We will now check for correlations between numerical variables (like actual work time, plant ID, etc.) to see if any relationships stand out.
+
+While plant ID is categorical, R will treat it as a numerical factor in this case, and we can check if any relationships between plant and downtime exist.
+
+```{r}
+# Convert PLANT_ID to numeric if needed
+iwc_data_clean <- iwc_data_clean %>%
+  mutate(PLANT_ID = as.numeric(as.factor(PLANT_ID)))  # Convert PLANT_ID to numeric
+
+# Select numerical columns
+numerical_cols <- iwc_data_clean %>%
+  select(ACTUAL_WORK_IN_MINUTES, PLANT_ID)
+
+# Check for missing values
+missing_values_numerical <- colSums(is.na(numerical_cols))
+print("Missing values in numerical columns:")
+print(missing_values_numerical)
+
+# Remove rows with missing values
+numerical_cols_clean <- na.omit(numerical_cols)
+
+# Compute the correlation matrix
+cor_matrix <- cor(numerical_cols_clean)
+print("Correlation matrix:")
+print(cor_matrix)
+
+```
+
+
+
+### 3.5. Step 5: Handling Missing Data
+Let's address any missing values in the data and decide how to deal with them (either remove or impute them).
+
+```{r}
+# Check again for missing values
+missing_values <- colSums(is.na(iwc_data_clean))
+print(missing_values)
+
+# We can choose to remove rows with too many missing values or impute them
+# For this step, let's remove rows where ACTUAL_WORK_IN_MINUTES is missing, as it's a key variable
+iwc_data_clean <- iwc_data_clean %>% filter(!is.na(ACTUAL_WORK_IN_MINUTES))
+
+# Confirm that missing values are handled
+sum(is.na(iwc_data_clean$ACTUAL_WORK_IN_MINUTES))
+
+```
+
+
+
+### 3.6. Step 6: Results from EDA
+Based on the exploration above, here are some key findings:
+
+1. Plant-specific downtime: Some plants experience significantly higher downtime than others, which may be related to their size or operational demands.
+
+2. Maintenance types: Preventive maintenance tends to have less downtime compared to unplanned or corrective maintenance, which supports the idea that a predictive model could reduce unplanned downtimes.
+
+3.Time trends: Downtimes may show seasonal or operational patterns that could be leveraged for prediction.
+
+4. Missing data: Missing values, especially in key columns like downtime, need to be handled carefully (imputation or exclusion)
+
+
+### 3.7. Step 7: Preparing Data for Modeling
+Before proceeding to the modeling phase, we will prepare the dataset by creating additional features, such as:
+
+1. Categorical encoding: Convert categorical variables (e.g., MAINTENANCE_TYPE_DESCRIPTION, PLANT_ID) into numerical values.
+
+2. Time features: Extract features like day of the week, month, etc., from the timestamp columns.
+
+3. Lag features: Create lag variables to see if previous downtimes can help predict future ones.
+
+
+```{r}
+# Convert categorical variables into factors
+iwc_data_clean <- iwc_data_clean %>%
+  mutate(
+    PLANT_ID = as.factor(PLANT_ID),
+    MAINTENANCE_TYPE_DESCRIPTION = as.factor(MAINTENANCE_TYPE_DESCRIPTION)
+  )
+
+# Create new time-based features
+iwc_data_clean <- iwc_data_clean %>%
+  mutate(
+    weekday = wday(EXECUTION_START_DATE, label = TRUE),
+    month = month(EXECUTION_START_DATE, label = TRUE)
+  )
+
+# Create lag features (e.g., previous downtime)
+iwc_data_clean <- iwc_data_clean %>%
+  arrange(EXECUTION_START_DATE) %>%
+  group_by(PLANT_ID) %>%
+  mutate(lag_downtime = lag(ACTUAL_WORK_IN_MINUTES, 1, order_by = EXECUTION_START_DATE))
+
+# View the updated dataset
+head(iwc_data_clean)
+
+```
+
+```{r}
+## Export Cleaned Data
+
+# Define the path where the CSV will be saved
+csv_path <- "iwc_data_clean.csv"
+
+# Write the cleaned data to a CSV file
+write_csv(iwc_data_clean, csv_path)
+
+# Confirm the file has been written
+print(paste("CSV file saved to:", csv_path))
+
+```
+
