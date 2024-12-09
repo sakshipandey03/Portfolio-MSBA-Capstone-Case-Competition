@@ -1,0 +1,876 @@
+---
+title: "Modeling Swire Coca Cola"
+author: "SAKSHI PANDEY"
+date: "October 26, 2024"
+format: 
+  html:
+    embed-resources: true
+    toc: true
+    toc-smooth-scroll: true
+    toc-depth: 3
+    toc-location: left
+    toc-title: "Contents"
+execute:
+  include: true
+  echo: true
+  eval: true    
+  warning: false
+  message: false
+
+---
+
+```{r setup_data, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+
+## Modeling Assignment
+This notebook aims to develop a predictive model based on insights gained in the EDA phase. We'll focus on enhancing performance over a benchmark model and making meaningful predictions aligned with the business objectives.
+
+## 1. Introduction & Setup: 
+
+### 1.1. Business Problem Statement
+
+Swire Coca-Cola faces challenges in unplanned machine downtimes leading to operational inefficiencies. This project aims to develop predictive maintenance models to anticipate machine failures, allowing for proactive maintenance actions.
+
+The objective of this project is to build a predictive maintenance model for Swire Coca-Cola, aimed at reducing unplanned machine downtimes and enhancing overall operational efficiency. At present, the company faces substantial financial losses and productivity declines due to unexpected equipment failures. 
+
+To overcome these challenges, Swire Coca-Cola seeks to implement a predictive maintenance solution. By analyzing historical data from the Internal Warehouse Controller (IWC) system, the goal is to identify patterns in machine failures, forecast future downtimes, and ensure that necessary parts are available in advance. The solution aims to minimize unplanned downtimes, optimize machine reliability, and improve production capacity while reducing financial losses.
+
+This exploratory data analysis (EDA) serves as the foundation for building the predictive model. Through detailed analysis of machine maintenance records, downtime logs, and operational data, we will uncover the key factors contributing to machine breakdowns. These insights will help shape a data-driven, proactive maintenance approach, enabling Swire Coca-Cola to shift from reactive to predictive maintenance, improve operational efficiency, and better meet production targets.
+
+### 1.2. Overview of Predictive Maintenance for Swire Coca-Cola
+Predictive maintenance leverages historical machine data to predict when maintenance should be performed. This helps reduce downtime and extend the life of equipment.
+
+### 1.3. Key Objectives:
+1. Improve on the baseline model's performance.
+2. Develop robust features as identified in the EDA.
+3. Evaluate different models and select the one best suited to solve the business problem.
+
+- Implement predictive models to forecast machine failures.
+- Enable preventive actions based on predictions to enhance operational efficiency.
+
+
+### 1.4. Importing Libraries
+Loading necessary libraries for data processing, visualization, and machine learning
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = F, warning = F)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(xgboost)
+library(pROC)
+library(glmnet)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Load dataset
+data <- read.csv("IWC_Work_Orders_Extract.csv")
+
+# Check data types
+str(data)
+```
+
+
+## 2. Machine Failure Prediction on Entire Machine Fleet
+### 2.1 Data Preparation: Feature Engineering and Cleaning
+Description: Preparing the dataset by feature engineering and cleaning data for modeling.
+
+Steps:
+Handling missing values.
+Converting dates to useful features like machine age.
+Preparing data for modeling.
+
+```{r}
+# Convert EQUIP_START_UP_DATE to Date format
+data$EQUIP_START_UP_DATE <- as.Date(data$EQUIP_START_UP_DATE)
+
+# Filter out rows with NA in EQUIP_START_UP_DATE
+data <- data %>% filter(!is.na(EQUIP_START_UP_DATE))
+
+# Handle missing values for ACTUAL_WORK_IN_MINUTES using median
+data$ACTUAL_WORK_IN_MINUTES[is.na(data$ACTUAL_WORK_IN_MINUTES)] <- 
+    median(data$ACTUAL_WORK_IN_MINUTES, na.rm = TRUE)
+
+# Create Machine_Age feature
+data$Machine_Age <- as.numeric(difftime(Sys.Date(), data$EQUIP_START_UP_DATE, units = "days"))
+
+# Define failure threshold based on data analysis
+threshold <- 1000  
+data <- data %>% mutate(Failure = ifelse(ACTUAL_WORK_IN_MINUTES > threshold, 1, 0))
+
+```
+
+### 2.2. Split Data into Training and Testing Sets
+
+```{r}
+set.seed(123)
+train_index <- createDataPartition(data$Failure, p = 0.7, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+```
+
+### 2.3. Logistic Regression Model
+Implementation of a logistic regression model to predict machine failures.
+Steps:
+Model training.
+Cross-validation.
+Model evaluation using accuracy, precision, recall, etc.
+
+```{r}
+library(glmnet)
+library(caret)
+
+# Ensure the response variable is a factor
+train_data$Failure <- as.factor(train_data$Failure)
+test_data$Failure <- as.factor(test_data$Failure)
+
+# Prepare the training data
+x_train <- as.matrix(train_data %>% select(ACTUAL_WORK_IN_MINUTES, Machine_Age))
+y_train <- train_data$Failure
+
+# Logistic Regression Model with Lasso regularization
+logistic_model <- cv.glmnet(x_train, y_train, family = "binomial", alpha = 1)
+
+# Evaluate the model on the test set
+x_test <- as.matrix(test_data %>% select(ACTUAL_WORK_IN_MINUTES, Machine_Age))
+logistic_predictions <- predict(logistic_model, newx = x_test, s = "lambda.min", type = "response")
+
+# Store the predicted probabilities for ROC analysis
+predictions <- logistic_predictions  # Store predictions for ROC
+
+# Convert predicted probabilities to classes (0 or 1)
+predicted_classes_logistic <- ifelse(logistic_predictions > 0.5, 1, 0)
+
+# Confusion Matrix for Logistic Regression
+logistic_confusion_matrix <- table(test_data$Failure, factor(predicted_classes_logistic, levels = c(0, 1)))
+
+# Calculate metrics
+logistic_accuracy <- sum(diag(logistic_confusion_matrix)) / sum(logistic_confusion_matrix)
+logistic_precision <- posPredValue(factor(predicted_classes_logistic, levels = c(0, 1)), test_data$Failure, positive = "1")
+logistic_recall <- sensitivity(factor(predicted_classes_logistic, levels = c(0, 1)), test_data$Failure)
+
+# Output the metrics
+cat("Logistic Regression Accuracy:", logistic_accuracy, "\n")
+cat("Logistic Regression Precision:", logistic_precision, "\n")
+cat("Logistic Regression Recall:", logistic_recall, "\n")
+
+```
+
+### 2.4. Random Forest Model
+Implementation of a random forest model for machine failure prediction.
+Steps:
+Hyperparameter tuning.
+Model evaluation using out-of-sample performance metrics.
+
+```{r}
+train_data$Failure <- factor(train_data$Failure)
+test_data$Failure <- factor(test_data$Failure)
+
+# Random Forest Model with hyperparameter tuning
+tune_grid <- expand.grid(mtry = seq(1, 3))
+cv_control <- trainControl(method = "cv", number = 5)
+
+rf_tuned <- train(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, 
+                  data = train_data, 
+                  method = "rf", 
+                  tuneGrid = tune_grid, 
+                  trControl = cv_control)
+
+# Evaluate on the test set
+rf_predictions <- predict(rf_tuned, newdata = test_data)
+
+# Confusion matrix
+rf_confusion_matrix <- table(test_data$Failure, rf_predictions)
+
+# Calculate metrics
+rf_accuracy <- sum(diag(rf_confusion_matrix)) / sum(rf_confusion_matrix)
+rf_precision <- posPredValue(rf_predictions, test_data$Failure, positive = "1")
+rf_recall <- sensitivity(rf_predictions, test_data$Failure)
+
+cat("Random Forest Accuracy:", rf_accuracy, "\n")
+cat("Random Forest Precision:", rf_precision, "\n")
+cat("Random Forest Recall:", rf_recall, "\n")
+```
+
+### 2.6. XGBoost Model
+Implementation of XGBoost model for failure prediction.
+Steps:
+Feature importance evaluation.
+Performance comparison with Logistic Regression and Random Forest.
+
+```{r}
+# Prepare data for XGBoost
+train_data_numeric <- train_data %>% select(ACTUAL_WORK_IN_MINUTES, Machine_Age, Failure)
+test_data_numeric <- test_data %>% select(ACTUAL_WORK_IN_MINUTES, Machine_Age, Failure)
+
+# Convert Failure to numeric
+train_data_numeric$Failure <- as.numeric(as.character(train_data_numeric$Failure))
+test_data_numeric$Failure <- as.numeric(as.character(test_data_numeric$Failure))
+
+# Train the XGBoost model
+xgb_model <- xgboost(data = as.matrix(train_data_numeric[, -3]), 
+                     label = train_data_numeric$Failure, 
+                     nrounds = 100, 
+                     objective = "binary:logistic", 
+                     eval_metric = "logloss", 
+                     verbose = 0)
+
+# Evaluate on the test set
+xgb_predictions <- predict(xgb_model, newdata = as.matrix(test_data_numeric[, -3]))
+xgb_pred_classes <- ifelse(xgb_predictions > 0.5, 1, 0)
+
+# Confusion Matrix for XGBoost
+xgb_confusion_matrix <- table(test_data_numeric$Failure, xgb_pred_classes)
+
+# Calculate metrics
+xgb_accuracy <- sum(diag(xgb_confusion_matrix)) / sum(xgb_confusion_matrix)
+xgb_precision <- posPredValue(as.factor(xgb_pred_classes), as.factor(test_data_numeric$Failure), positive = "1")
+xgb_recall <- sensitivity(as.factor(xgb_pred_classes), as.factor(test_data_numeric$Failure))
+
+cat("XGBoost Accuracy:", xgb_accuracy, "\n")
+cat("XGBoost Precision:", xgb_precision, "\n")
+cat("XGBoost Recall:", xgb_recall, "\n")
+```
+
+### 2.7. Results Comparison
+Model comparison for machine fleet (Logistic Regression vs. Random Forest vs. XGBoost).
+Summary of performance (best model for entire fleet).
+```{r}
+# Initialize the results with NA values in case of missing metrics
+results <- data.frame(
+  Model = c("Logistic Regression", "Random Forest", "XGBoost"),
+  Accuracy = c(logistic_accuracy, rf_accuracy, xgb_accuracy),
+  Precision = c(ifelse(is.na(logistic_precision), NA, logistic_precision), 
+                ifelse(is.na(rf_precision), NA, rf_precision), 
+                ifelse(is.na(xgb_precision), NA, xgb_precision)),
+  Recall = c(ifelse(is.na(logistic_recall), NA, logistic_recall), 
+             ifelse(is.na(rf_recall), NA, rf_recall), 
+             ifelse(is.na(xgb_recall), NA, xgb_recall))
+)
+
+# Check if all metrics have valid entries
+if (any(is.na(results$Accuracy))) {
+  cat("Warning: Some accuracy values are missing.\n")
+}
+if (any(is.na(results$Precision))) {
+  cat("Warning: Some precision values are missing.\n")
+}
+if (any(is.na(results$Recall))) {
+  cat("Warning: Some recall values are missing.\n")
+}
+
+# Print the results
+print("Model Comparison Results:")
+print(results)
+
+
+```
+### 2.8. ROC Curve Visualization
+
+```{r}
+# ROC Curve Visualization
+library(pROC)
+
+# Plot ROC curves for each model
+roc_logistic <- roc(test_data$Failure, predictions)
+roc_rf <- roc(test_data$Failure, as.numeric(rf_predictions))
+roc_xgb <- roc(test_data_numeric$Failure, xgb_predictions)
+
+cat("AUC for Logistic Regression:", auc(roc_logistic), "\n")
+cat("AUC for Random Forest:", auc(roc_rf), "\n")
+cat("AUC for XGBoost:", auc(roc_xgb), "\n")
+
+# Plot ROC Curves
+plot(roc_logistic, main = "ROC Curves for Model Comparison")
+lines(roc_rf, col = "red")
+lines(roc_xgb, col = "blue")
+legend("bottomright", legend = c("Logistic Regression", "Random Forest", "XGBoost"), 
+       col = c("black", "red", "blue"), lty = 1)
+
+
+```
+
+## 3. Machine Failure Prediction for Machines with High Maintenance Frequency
+### 3.1 Data Preparation for High-Maintenance Machines
+
+Additional feature engineering for machines with high maintenance frequency.
+Cleaning and preparing a subset of machines that experience frequent failures.
+
+```{r}
+library(caret)
+library(dplyr)
+library(randomForest)
+library(xgboost)
+
+# Create Maintenance_Count variable
+data <- data %>%
+  group_by(EQUIPMENT_ID) %>%  # Group by Equipment ID
+  mutate(Maintenance_Count = n()) %>%  # Count number of maintenance records
+  ungroup()
+
+# Set threshold for high maintenance frequency
+maintenance_threshold <- 5  # Defined an appropriate threshold for high maintenance
+
+# Subset for high-maintenance machines
+high_maintenance_data <- data %>% filter(Maintenance_Count > maintenance_threshold)
+
+# Check if the filtering worked
+cat("Number of high-maintenance machines:", nrow(high_maintenance_data), "\n")
+
+# Feature engineering for high-maintenance machines
+# Ensure that EQUIP_START_UP_DATE is in the correct format
+high_maintenance_data$EQUIP_START_UP_DATE <- as.Date(high_maintenance_data$EQUIP_START_UP_DATE)
+high_maintenance_data$Machine_Age <- as.numeric(difftime(Sys.Date(), high_maintenance_data$EQUIP_START_UP_DATE, units = "days"))
+
+# Check the structure of the high-maintenance data
+str(high_maintenance_data)
+
+
+```
+
+
+### 3.2 Logistic Regression Model
+Logistic regression modeling for high-maintenance machines.
+Cross-validation and evaluation.
+
+```{r}
+# Logistic Regression for high-maintenance machines
+logistic_high_maintenance <- glm(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, 
+                                  data = high_maintenance_data, 
+                                  family = binomial)
+summary(logistic_high_maintenance)
+
+# Cross-validation
+cv_control <- trainControl(method = "cv", number = 10)  # Ensure cv_control is defined
+logistic_high_cv <- train(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, 
+                           data = high_maintenance_data, 
+                           method = "glm", 
+                           family = "binomial",
+                           trControl = cv_control)
+
+
+print(logistic_high_cv)
+```
+
+### 3.3 Random Forest Model
+Random forest model for high-maintenance machines.
+Performance evaluation.
+
+```{r}
+# Random Forest for high-maintenance machines with cross-validation
+rf_high_cv_control <- trainControl(method = "cv", number = 10)  # Define cross-validation control
+
+rf_high_model <- train(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, 
+                        data = high_maintenance_data, 
+                        method = "rf", 
+                        ntree = 100, 
+                        trControl = rf_high_cv_control)
+
+# Print the model summary
+print(rf_high_model)
+
+# Performance evaluation
+rf_high_pred <- predict(rf_high_model, newdata = high_maintenance_data)
+
+# Convert predicted and actual values to factors
+rf_high_pred_factor <- factor(rf_high_pred, levels = c(0, 1))  # Assuming 0 for no failure and 1 for failure
+actual_failure_factor <- factor(high_maintenance_data$Failure, levels = c(0, 1))
+
+# Generate confusion matrix
+conf_matrix <- confusionMatrix(rf_high_pred_factor, actual_failure_factor)
+
+# Print confusion matrix
+print(conf_matrix)
+
+```
+
+### 3.4 XGBoost Model
+XGBoost for high-maintenance machines.
+Performance comparison with other models.
+
+
+```{r}
+# Prepare the data for XGBoost
+xgb_data <- high_maintenance_data[, c("ACTUAL_WORK_IN_MINUTES", "Machine_Age")]
+xgb_label <- high_maintenance_data$Failure
+
+# Convert to matrix format
+xgb_matrix <- as.matrix(xgb_data)
+
+# XGBoost for high-maintenance machines
+xgb_high_model <- xgboost(data = xgb_matrix, 
+                           label = xgb_label, 
+                           nrounds = 100, 
+                           objective = "binary:logistic", 
+                           eval_metric = "logloss", 
+                           verbose = 0)
+
+# Performance comparison
+xgb_high_pred <- predict(xgb_high_model, newdata = xgb_matrix)
+
+# Convert predictions to binary class labels
+xgb_high_pred_class <- ifelse(xgb_high_pred > 0.5, 1, 0)
+
+# Generate confusion matrix
+confusion_matrix_xgb <- confusionMatrix(factor(xgb_high_pred_class, levels = c(0, 1)), 
+                                        factor(xgb_label, levels = c(0, 1)))
+
+# Print confusion matrix
+print(confusion_matrix_xgb)
+
+```
+
+### 3.5 Results for High-Maintenance Machines
+Comparison of model performance on high-maintenance machines.
+Best model for this subset of machines.
+
+```{r}
+# Predicting with logistic regression
+logit_pred <- predict(logistic_high_cv$finalModel, newdata = high_maintenance_data, type = "response")
+logit_pred_class <- ifelse(logit_pred > 0.5, 1, 0)
+logit_accuracy <- mean(logit_pred_class == high_maintenance_data$Failure)
+
+rf_pred <- predict(rf_high_model, newdata = high_maintenance_data)
+rf_accuracy <- mean(rf_pred == high_maintenance_data$Failure)
+
+
+# Calculate accuracy for XGBoost
+xgb_accuracy <- mean(xgb_high_pred_class == xgb_label)
+print(xgb_accuracy)  # Print the accuracy
+# Initialize an empty list to store accuracies
+accuracies <- c()
+
+# Calculate accuracies
+logit_accuracy <- mean(logit_pred_class == high_maintenance_data$Failure)
+rf_accuracy <- mean(rf_pred == high_maintenance_data$Failure)
+xgb_accuracy <- mean(xgb_high_pred_class == xgb_label)
+
+# Create a data frame for model comparison
+high_maintenance_results <- data.frame(
+    Model = c("Logistic Regression", "Random Forest", "XGBoost"),
+    Accuracy = c(logit_accuracy, rf_accuracy, xgb_accuracy)
+)
+
+print(high_maintenance_results)
+```
+```{r}
+# Visualize accuracies for high-maintenance machines
+library(ggplot2)
+
+ggplot(high_maintenance_results, aes(x = Model, y = Accuracy)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  theme_minimal() +
+  labs(title = "Model Accuracy for High-Maintenance Machines", 
+       x = "Model", 
+       y = "Accuracy")
+
+```
+
+
+
+## 4.Machine Failure Prediction for Machines by Region
+### 4.1 Data Preparation for Both Regions
+Data Preparation: Subset and prepare data for machines for both the regions.
+
+```{r}
+library(dplyr)
+library(randomForest)
+library(xgboost)
+
+# Add a Region column based on production locations
+data <- data %>%
+  mutate(Region = case_when(
+    PRODUCTION_LOCATION %in% c("ROMA", "MONZA") ~ "Northern",
+    PRODUCTION_LOCATION %in% c("COTA", "MONACO") ~ "Southern",
+    TRUE ~ "Other"  # Adjust as needed
+  ))
+
+# Filter data for Northern region
+northern_data <- data %>% filter(Region == "Northern")
+
+# Filter data for Southern region
+southern_data <- data %>% filter(Region == "Southern")
+
+# Get unique values in PRODUCTION_LOCATION
+unique_production_locations <- unique(data$PRODUCTION_LOCATION)
+print(unique_production_locations)
+
+
+```
+### 4.2. Northern Region
+#### 4.2.1 Logistic Regression Model for Northern Region
+```{r}
+# Logistic Regression for Northern region
+logistic_northern <- glm(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, data = northern_data, family = binomial)
+summary(logistic_northern)
+
+
+```
+
+#### 4.2.2  Random Forest Model for Northern Region
+```{r}
+# Random Forest for Northern region
+rf_northern_model <- randomForest(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, data = northern_data, ntree = 100)
+print(rf_northern_model)
+
+```
+
+#### 4.2.3  XGBoost Model for Northern Region
+```{r}
+# Prepare data for XGBoost
+xgb_northern_data <- as.matrix(northern_data[, c("ACTUAL_WORK_IN_MINUTES", "Machine_Age")])
+xgb_northern_model <- xgboost(data = xgb_northern_data, label = northern_data$Failure, nrounds = 100, objective = "binary:logistic")
+
+# Output model details
+print(xgb_northern_model)
+
+
+```
+
+#### 4.2.4  Compare Model Performance for Northern Region
+
+```{r}
+
+# Calculate accuracy for Logistic Regression
+logistic_pred_northern <- ifelse(predict(logistic_northern, type = "response") > 0.5, 1, 0)
+logistic_accuracy_northern <- mean(logistic_pred_northern == northern_data$Failure)
+
+# Calculate accuracy for Random Forest
+rf_pred_northern <- predict(rf_northern_model)
+rf_accuracy_northern <- mean(rf_pred_northern == northern_data$Failure)
+
+# Calculate accuracy for XGBoost
+xgb_pred_northern <- predict(xgb_northern_model, newdata = xgb_northern_data)
+xgb_accuracy_northern <- mean(ifelse(xgb_pred_northern > 0.5, 1, 0) == northern_data$Failure)
+
+# Compare model performance in Northern region
+northern_results <- data.frame(
+  Model = c("Logistic Regression", "Random Forest", "XGBoost"),
+  Accuracy = c(logistic_accuracy_northern, rf_accuracy_northern, xgb_accuracy_northern)
+)
+
+print(northern_results)
+
+# Visualize Northern region results
+ggplot(northern_results, aes(x = Model, y = Accuracy)) +
+  geom_bar(stat = "identity", fill = "darkgreen") +
+  theme_minimal() +
+  labs(title = "Model Accuracy for Northern Region", 
+       x = "Model", 
+       y = "Accuracy")
+
+```
+
+### 4.3. Southern Region
+#### 4.3.1 Logistic Regression Model: Predict machine failures in the Southern region.
+
+```{r}
+# Logistic Regression for Southern region
+logistic_southern <- glm(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, data = southern_data, family = binomial)
+summary(logistic_southern)
+
+
+```
+
+#### 4.3.2 Random Forest Model: Predict failures with random forest.
+```{r}
+# Random Forest for Southern region
+rf_southern_model <- randomForest(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, data = southern_data, ntree = 100)
+print(rf_southern_model)
+
+
+```
+
+#### 4.3.3. XGBoost Model: Compare the performance of models in the Southern region.
+```{r}
+# Prepare data for XGBoost
+xgb_southern_data <- as.matrix(southern_data[, c("ACTUAL_WORK_IN_MINUTES", "Machine_Age")])
+xgb_southern_model <- xgboost(data = xgb_southern_data, label = southern_data$Failure, nrounds = 100, objective = "binary:logistic")
+
+# Output model details
+print(xgb_southern_model)
+  
+```
+
+#### 4.3.4. Results for Southern Region: Best model for machines in this region.
+
+```{r}
+# Calculate accuracy for Logistic Regression
+logistic_pred_southern <- ifelse(predict(logistic_southern, type = "response") > 0.5, 1, 0)
+logistic_accuracy_southern <- mean(logistic_pred_southern == southern_data$Failure)
+
+# Calculate accuracy for Random Forest
+rf_pred_southern <- predict(rf_southern_model)
+rf_accuracy_southern <- mean(rf_pred_southern == southern_data$Failure)
+
+# Calculate accuracy for XGBoost
+xgb_pred_southern <- predict(xgb_southern_model, newdata = xgb_southern_data)
+xgb_accuracy_southern <- mean(ifelse(xgb_pred_southern > 0.5, 1, 0) == southern_data$Failure)
+
+# Compare model performance in Southern region
+southern_results <- data.frame(
+  Model = c("Logistic Regression", "Random Forest", "XGBoost"),
+  Accuracy = c(logistic_accuracy_southern, rf_accuracy_southern, xgb_accuracy_southern)
+)
+
+print(southern_results)
+
+# Visualize Southern region results
+ggplot(southern_results, aes(x = Model, y = Accuracy)) +
+  geom_bar(stat = "identity", fill = "darkred") +
+  theme_minimal() +
+  labs(title = "Model Accuracy for Southern Region", 
+       x = "Model", 
+       y = "Accuracy")
+
+
+
+```
+
+## 5. Machine Failure Prediction by Equipment Age
+### 5.1 Older Machines
+Data Preparation: Subset data for older machines (above a certain age).
+
+```{r}
+# Set a threshold based on quantiles
+threshold <- quantile(data$Machine_Age, 0.75, na.rm = TRUE)  # Using the 75th percentile as the cutoff
+
+# Data preparation for older machines
+older_machines_data <- data %>% filter(Machine_Age > threshold)
+
+# Ensure 'Failure' column is binary (0 or 1)
+older_machines_data$Failure <- as.numeric(older_machines_data$Failure)
+
+```
+
+#### 5.1.1. Logistic Regression, Random Forest, XGBoost Models: Train models for older machines.
+
+```{r}
+library(randomForest)
+library(xgboost)
+
+# Logistic Regression for older machines
+logistic_older <- glm(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, data = older_machines_data, family = binomial)
+summary(logistic_older)
+
+# Random Forest for older machines
+rf_older_model <- randomForest(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, data = older_machines_data, ntree = 100)
+print(rf_older_model)
+
+# Prepare data for XGBoost
+xgb_older_data <- as.matrix(older_machines_data[, c("ACTUAL_WORK_IN_MINUTES", "Machine_Age")])
+older_machines_data$Failure <- ifelse(older_machines_data$Failure > 0, 1, 0)  # Ensure binary encoding
+xgb_older_model <- xgboost(data = xgb_older_data, label = older_machines_data$Failure, nrounds = 100, objective = "binary:logistic")
+
+```
+
+
+#### 5.1.2. Results for Older Machines: Best model for this age group.
+
+```{r}
+# Calculate accuracy for Logistic Regression
+logistic_pred_older <- ifelse(predict(logistic_older, type = "response") > 0.5, 1, 0)
+logistic_accuracy_older <- mean(logistic_pred_older == older_machines_data$Failure)
+
+# Calculate accuracy for Random Forest
+rf_pred_older <- predict(rf_older_model)
+rf_accuracy_older <- mean(rf_pred_older == older_machines_data$Failure)
+
+# Calculate accuracy for XGBoost
+xgb_pred_older <- predict(xgb_older_model, newdata = xgb_older_data)
+xgb_accuracy_older <- mean(ifelse(xgb_pred_older > 0.5, 1, 0) == older_machines_data$Failure)
+
+# Compare model performance for older machines
+older_results <- data.frame(
+  Model = c("Logistic Regression", "Random Forest", "XGBoost"),
+  Accuracy = c(logistic_accuracy_older, rf_accuracy_older, xgb_accuracy_older)
+)
+
+print(older_results)
+
+# Visualize results for older machines
+ggplot(older_results, aes(x = Model, y = Accuracy)) +
+  geom_bar(stat = "identity", fill = "purple") +
+  theme_minimal() +
+  labs(title = "Model Accuracy for Older Machines", 
+       x = "Model", 
+       y = "Accuracy")
+
+
+
+```
+
+### 5.2 Newer Machines
+Data Preparation: Subset data for newer machines.
+
+```{r}
+# Data preparation for newer machines
+newer_machines_data <- data %>% filter(Machine_Age <= threshold)
+
+# Ensure 'Failure' column is binary (0 or 1)
+newer_machines_data$Failure <- as.numeric(newer_machines_data$Failure)
+
+```
+
+#### 5.2.1. Logistic Regression, Random Forest, XGBoost Models: Train models for newer machines.
+
+```{r}
+# Logistic Regression for newer machines
+logistic_newer <- glm(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, data = newer_machines_data, family = binomial)
+summary(logistic_newer)
+
+# Random Forest for newer machines
+rf_newer_model <- randomForest(Failure ~ ACTUAL_WORK_IN_MINUTES + Machine_Age, data = newer_machines_data, ntree = 100)
+print(rf_newer_model)
+
+# Prepare data for XGBoost
+xgb_newer_data <- as.matrix(newer_machines_data[, c("ACTUAL_WORK_IN_MINUTES", "Machine_Age")])
+newer_machines_data$Failure <- ifelse(newer_machines_data$Failure > 0, 1, 0)  # Ensure binary encoding
+xgb_newer_model <- xgboost(data = xgb_newer_data, label = newer_machines_data$Failure, nrounds = 100, objective = "binary:logistic")
+
+```
+
+#### 5.2.2. Results for Newer Machines: Best model for this age group.
+```{r}
+# Calculate accuracy for Logistic Regression
+logistic_pred_newer <- ifelse(predict(logistic_newer, type = "response") > 0.5, 1, 0)
+logistic_accuracy_newer <- mean(logistic_pred_newer == newer_machines_data$Failure)
+
+# Calculate accuracy for Random Forest
+rf_pred_newer <- predict(rf_newer_model)
+rf_accuracy_newer <- mean(rf_pred_newer == newer_machines_data$Failure)
+
+# Calculate accuracy for XGBoost
+xgb_pred_newer <- predict(xgb_newer_model, newdata = xgb_newer_data)
+xgb_accuracy_newer <- mean(ifelse(xgb_pred_newer > 0.5, 1, 0) == newer_machines_data$Failure)
+
+# Compare model performance for newer machines
+newer_results <- data.frame(
+  Model = c("Logistic Regression", "Random Forest", "XGBoost"),
+  Accuracy = c(logistic_accuracy_newer, rf_accuracy_newer, xgb_accuracy_newer)
+)
+
+print(newer_results)
+
+# Visualize results for newer machines
+ggplot(newer_results, aes(x = Model, y = Accuracy)) +
+  geom_bar(stat = "identity", fill = "orange") +
+  theme_minimal() +
+  labs(title = "Model Accuracy for Newer Machines", 
+       x = "Model", 
+       y = "Accuracy")
+
+
+```
+
+## 6. Overall Results and Business Insights
+Summary of results across different categories (entire fleet, high-maintenance machines, regional breakdown, equipment age).
+
+### 6.1. Best-performing models in each case.
+```{r}
+# Consolidating results into a summary table
+final_results <- rbind(
+  data.frame(Model = "Logistic Regression", Type = "Entire Fleet", Accuracy = logistic_accuracy),
+  data.frame(Model = "Random Forest", Type = "Entire Fleet", Accuracy = rf_accuracy),
+  data.frame(Model = "XGBoost", Type = "Entire Fleet", Accuracy = xgb_accuracy),
+  high_maintenance_results %>% mutate(Type = "High-Maintenance"),
+  northern_results %>% mutate(Type = "Northern Region"),
+  southern_results %>% mutate(Type = "Southern Region"),
+  older_results %>% mutate(Type = "Older Machines"),
+  newer_results %>% mutate(Type = "Newer Machines")
+)
+
+# Print the consolidated results
+print(final_results)
+
+
+```
+
+
+### 6.2. Cost Analysis
+To provide a more flexible and comprehensive cost analysis, this section incorporates variable inputs for maintenance costs. This approach allows for separate modeling across multiple cost scenarios, helping to create a more accurate reflection of potential maintenance expenditures. Below are the detailed components:
+
+#### 6.2.1. Total Maintenance Costs by Production Location
+
+```{r}
+# Adjustable base cost per minute
+cost_per_minute <- 10  
+
+# Calculate maintenance costs using production location
+data$MAINTENANCE_COST <- data$ACTUAL_WORK_IN_MINUTES * cost_per_minute
+total_costs_by_location <- data %>%
+  group_by(PRODUCTION_LOCATION) %>%
+  summarise(total_cost = sum(MAINTENANCE_COST, na.rm = TRUE), .groups = "drop")
+
+# Plot total maintenance costs by production location
+ggplot(total_costs_by_location, aes(x = reorder(PRODUCTION_LOCATION, total_cost), y = total_cost)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  labs(
+    title = "Total Maintenance Costs by Production Location",
+    x = "Production Location",
+    y = "Total Maintenance Cost"
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14)
+  )
+```
+#### 6.2.2. Costs by Maintenance Type and Machine Age
+
+```{r}
+# Higher multiplier for unplanned maintenance
+downtime_cost_multiplier <- 20  
+
+# Financial impact by maintenance type
+data$FINANCIAL_IMPACT <- ifelse(data$MAINTENANCE_ACTIVITY_TYPE == "Unplanned",
+                                data$ACTUAL_WORK_IN_MINUTES * downtime_cost_multiplier,
+                                data$ACTUAL_WORK_IN_MINUTES * cost_per_minute)
+
+# Summarize financial impact by maintenance type
+financial_impact <- data %>%
+  group_by(MAINTENANCE_ACTIVITY_TYPE) %>%
+  summarise(total_impact = sum(FINANCIAL_IMPACT, na.rm = TRUE), .groups = "drop")
+
+# Plot financial impact of unplanned vs planned maintenance
+ggplot(financial_impact, aes(x = MAINTENANCE_ACTIVITY_TYPE, y = total_impact, fill = MAINTENANCE_ACTIVITY_TYPE)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_fill_manual(values = c("red", "green")) +
+  labs(
+    title = "Financial Impact of Unplanned vs Planned Downtime",
+    x = "Maintenance Activity Type",
+    y = "Total Financial Impact"
+  ) +
+  theme_minimal(base_size = 15) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 18, face = "bold"),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14)
+  )
+```
+
+### 6.3. Business validation of models: How can these models optimize Swire Coca-Cola's maintenance processes?
+
+The machine failure prediction models developed in this analysis provide several key insights that can optimize Swire Coca-Cola's maintenance processes:
+
+Predictive Maintenance: By identifying potential failures before they occur, Swire Coca-Cola can implement predictive maintenance strategies, reducing unplanned downtime and maintenance costs.
+
+Targeted Interventions: Models allow for a focused approach on high-maintenance machines, ensuring that resources are allocated efficiently. Maintenance efforts can be concentrated on machines identified as high-risk.
+
+Regional Strategies: Understanding machine performance by region can help tailor maintenance schedules and operational strategies to regional needs, optimizing labor and resources.
+
+Age-Based Maintenance Strategies: Differentiating between older and newer machines enables the development of customized maintenance plans, improving efficiency and machine lifespan.
+
+Performance Monitoring: Continuous monitoring of model predictions can facilitate ongoing assessments of machine health, helping to validate and refine maintenance strategies over time.
+
+
+
