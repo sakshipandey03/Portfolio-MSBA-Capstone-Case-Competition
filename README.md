@@ -10,7 +10,8 @@
 - Challenges
 - Learnings
 
-![image](https://your-repo-link.com)
+
+![logo](https://github.com/user-attachments/assets/cdc598fd-8d26-4bbf-b92e-4038b19456d7)
 
 ## Business Problem 
 Swire Coca-Cola faces significant unplanned downtime in its production plants, leading to an annual loss of approximately $60 million. These downtimes stem from mechanical failures, wear and tear, or unexpected breakdowns. The company aims to develop a predictive maintenance model to anticipate failures, reduce downtime, and enhance operational efficiency.
