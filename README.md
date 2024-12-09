@@ -10,7 +10,6 @@
 - Challenges
 - Learnings
 
-
 ![logo](https://github.com/user-attachments/assets/cdc598fd-8d26-4bbf-b92e-4038b19456d7)
 
 ## Business Problem 
@@ -30,13 +29,24 @@ We developed a predictive model using historical downtime data to:
 - **Identify components frequently involved in breakdowns**
 - **Optimize maintenance schedules** to reduce downtime
 
+### Survival Analysis
+As part of the solution, we performed a **Survival Analysis** to understand the relationship between machine age and failure probabilities. This analysis helps in identifying the critical time points when failures are most likely to occur and can significantly improve maintenance scheduling.
+
+Key features of the Survival Analysis:
+- **Survival Probability**: The red line shows survival probability decreasing as machines age. Drops represent failure events; steeper drops indicate more frequent failures.
+- **Critical Time Points**: 
+  - The initial steep drop suggests high failure rates for new machines, possibly due to manufacturing defects or break-in issues. 
+  - The plateauing later on indicates lower failure rates for older machines, likely due to the survival of the most reliable units or the impact of effective preventive maintenance.
+
+This analysis has been integrated into the model to help prioritize maintenance schedules based on the likelihood of machine failure at specific ages.
+
 ### Modeling Approach
 Using advanced machine learning techniques like **Random Forest** and **XGBoost**, the project aimed to predict machine failure risks and optimize maintenance strategies by identifying key predictive features, such as maintenance intensity and machine age.
 
 - **Logistic Regression**: Accuracy of 79% in predicting maintenance costs and failure impacts.
 - **XGBoost**: Accuracy of 83%, with important features like **maintenance intensity** and **machine age** being crucial for the predictions.
 
-### Predictive Model Results
+### Predictive Model Results- XGBoost
 - **Post-Implementation Cost**:
   - Average Predicted Maintenance Cost: $715.99
   - Average Predicted Impact Cost: $358.00
@@ -53,7 +63,6 @@ Using advanced machine learning techniques like **Random Forest** and **XGBoost*
 - **tidyr**: For tidying up the data and reshaping datasets.
 - **randomForest**: For machine learning and predicting failure likelihood.
 - **xgboost**: For improved model performance and prediction accuracy.
-
 
 ## Contribution
 - Worked on data exploration and visualization, focusing on creating intuitive charts for machine breakdown frequencies, seasonal maintenance trends, and maintenance cost distribution across equipment categories.
